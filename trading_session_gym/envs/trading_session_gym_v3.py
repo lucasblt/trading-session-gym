@@ -8,12 +8,12 @@ logger = logging.getLogger(__name__)
 
 STEP_SIZE = 60 # In seconds
 SESSION_DURATION = 24*60*60/STEP_SIZE # In steps
-NUM_MUTUAL_SESSIONS = 12 # Number of mutual trading sessions
-NUM_SIMULATED_SESSIONS = 10*NUM_MUTUAL_SESSIONS # Used to get the done
+NUM_SIMULATED_SESSIONS = 2*288 # Used to get the done
+NUM_MUTUAL_SESSIONS = 288 # Number of mutual trading sessions
 PRODUCT_DURATION = 5*60/STEP_SIZE # In steps
-MAX_SESSION_QUANTITY = 7000
-MAX_SESSION_PRICE = 100
-BOUNDARY = 3300
+MAX_SESSION_QUANTITY = 10000
+MAX_SESSION_PRICE = 1000
+MAX_FORECAST = 1000
 
 class TradingSession(gym.Env):
     metadata = {'render.modes': ['human']}
@@ -21,13 +21,14 @@ class TradingSession(gym.Env):
     def __init__(self):
         super(TradingSession, self).__init__()
         # Definition of action space:
-        self.action_space = spaces.Box(low=-275, high=275, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.int16)
+        self.action_space = spaces.Box(low=0, high=5, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.int16)
         # Definition of observation space:
         self.observation_space = spaces.Dict({'session_steps_left': spaces.Box(low=1, high=SESSION_DURATION, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.int16),
                                               'session_prices': spaces.Box(low=0, high=MAX_SESSION_PRICE, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.int16),
-                                              'session_quantities': spaces.Box(low=-MAX_SESSION_QUANTITY, high=MAX_SESSION_QUANTITY, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.int16),
+                                              'session_quantities': spaces.Box(low=0, high=MAX_SESSION_QUANTITY, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.int16),
                                               'holdings_quantity': spaces.Box(low=0, high=MAX_SESSION_QUANTITY, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.int16),
-                                              'holdings_cash': spaces.Box(low=0, high=MAX_SESSION_PRICE*MAX_SESSION_QUANTITY, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.int16)})
+                                              'holdings_cash': spaces.Box(low=0, high=MAX_SESSION_PRICE*MAX_SESSION_QUANTITY, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.int16),
+                                              'forecast_quantity': spaces.Box(low=0, high=MAX_FORECAST, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.int16)})
 
 
     def step(self, action):
@@ -52,11 +53,11 @@ class TradingSession(gym.Env):
         self.reward = 0
         self.session_prices = np.round(MAX_SESSION_PRICE * np.random.rand(NUM_MUTUAL_SESSIONS))
         self.session_quantities = np.full(NUM_MUTUAL_SESSIONS, MAX_SESSION_QUANTITY)
-        self.session_steps_left = np.arange(SESSION_DURATION, (SESSION_DURATION-NUM_MUTUAL_SESSIONS*PRODUCT_DURATION), -PRODUCT_DURATION)
+        self.session_steps_left = np.linspace(SESSION_DURATION, PRODUCT_DURATION, num=NUM_MUTUAL_SESSIONS)
         self.holdings_quantity = np.zeros(NUM_MUTUAL_SESSIONS)
+        self.holdings_quantity_previous = np.zeros(NUM_MUTUAL_SESSIONS)
         self.holdings_cash = np.zeros(NUM_MUTUAL_SESSIONS)
-        self.boundary = BOUNDARY
-        self.multiplier = 0
+        self.forecast_quantity = np.full(NUM_MUTUAL_SESSIONS, 0.5 * MAX_FORECAST)
 
     def _take_action(self, action):
         '''
@@ -65,12 +66,9 @@ class TradingSession(gym.Env):
         self.holdings_quantity_previous = self.holdings_quantity.copy()
         self.holdings_cash_previous = self.holdings_cash.copy()
 
-        for idx in range(NUM_MUTUAL_SESSIONS):
-            if (action[idx] > 0) and (action[idx] > self.session_quantities[idx]):
-                    action[idx] = self.session_quantities[idx]
-            elif action[idx] < 0 and (action[idx] > self.session_quantities[idx]):
-                    action[idx] = self.session_quantities[idx]
-
+        greater_idx = np.argwhere(np.greater(action, self.session_quantities))
+        for idx in greater_idx:
+            action[idx] = self.session_quantities[idx]
         self.holdings_quantity += action
         self.holdings_cash += np.multiply(action, self.session_prices)
         self.session_quantities -= action
@@ -86,14 +84,15 @@ class TradingSession(gym.Env):
                'session_prices': self.session_prices,
                'session_quantities': self.session_quantities,
                'holdings_quantity': self.holdings_quantity,
-               'holdings_cash': self.holdings_cash}
+               'holdings_cash': self.holdings_cash,
+               'forecast_quantity': self.forecast_quantity}
         return obs
 
     def _update_session_prices(self):
         '''
         Update the price of trading sessions.
         '''
-        self.session_prices += np.round(np.random.normal(0, 0.01*MAX_SESSION_PRICE, NUM_MUTUAL_SESSIONS))
+        self.session_prices += np.round(np.random.normal(0, 10, NUM_MUTUAL_SESSIONS))
         neg_prices_idx = np.argwhere(self.session_prices < 0)
         max_prices_idx = np.argwhere(self.session_prices >= MAX_SESSION_PRICE)
 
@@ -130,24 +129,23 @@ class TradingSession(gym.Env):
         self.holdings_quantity_previous[idx] = 0
 
     def _compute_reward(self):
+        delta_forecast_previous = np.absolute(self.forecast_quantity - self.holdings_quantity_previous)
+        delta_forecast_updated = np.absolute(self.forecast_quantity - self.holdings_quantity)
 
-        delta_forecast_previous = np.absolute(self.boundary - np.sum(self.holdings_quantity_previous))
-        delta_forecast_updated = np.absolute(self.boundary - np.sum(self.holdings_quantity))
+        multiplier_array = np.zeros(NUM_MUTUAL_SESSIONS)
 
-        if delta_forecast_previous == delta_forecast_updated:
-            self.reward = 0
-            return 0
-
-        elif delta_forecast_previous > delta_forecast_updated:
-            multiplier = 1
-        elif delta_forecast_previous < delta_forecast_updated:
-            multiplier = -1
+        for idx in range(NUM_MUTUAL_SESSIONS):
+            if delta_forecast_previous[idx] > delta_forecast_updated[idx]:
+                multiplier_array[idx] = 1
+            elif delta_forecast_previous[idx] < delta_forecast_updated[idx]:
+                multiplier_array[idx] = -1
 
         delta_holdings = np.subtract(self.holdings_quantity, self.holdings_quantity_previous)
         delta_cash = np.subtract(self.holdings_cash, self.holdings_cash_previous)
 
-        quantity_over_cash = np.sum(np.nan_to_num(np.divide(delta_holdings, delta_cash), copy=True, nan=0, posinf=0, neginf=0))
-        self.reward = multiplier*quantity_over_cash
+        quantity_over_cash = np.nan_to_num(np.divide(delta_holdings, delta_cash), copy=True, nan=0, posinf=0, neginf=0)
+        self.reward =np.sum(np.multiply(multiplier_array, quantity_over_cash))
+
         return self.reward
 
     def get_reward(self):
@@ -172,6 +170,5 @@ class TradingSession(gym.Env):
         '''
         Render the environment to the screen
         '''
-        #print("Reward: {}".format(round(self.reward, 3)))
-        print(self.session_steps_left)
+        print("Reward: {}".format(round(self.reward, 3)))
         pass
