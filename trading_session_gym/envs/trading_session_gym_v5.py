@@ -54,7 +54,7 @@ class TradingSession(gym.Env):
         self.current_step = 0
         self.reward = 0
         self.session_prices = np.full(NUM_MUTUAL_SESSIONS, (MAX_SESSION_PRICE+MIN_SESSION_PRICE)/2)
-        self.tendency = self.session_prices[0]
+        #self.session_prices = MAX_SESSION_PRICE * np.random.rand(NUM_MUTUAL_SESSIONS)
         self.session_quantities = np.full(NUM_MUTUAL_SESSIONS, MAX_SESSION_QUANTITY, dtype='float')
         self.session_steps_left = np.arange(SESSION_DURATION, (SESSION_DURATION-NUM_MUTUAL_SESSIONS*PRODUCT_DURATION), -PRODUCT_DURATION)
         self.holdings_quantity = np.zeros(NUM_MUTUAL_SESSIONS, dtype='float')
@@ -99,9 +99,7 @@ class TradingSession(gym.Env):
         '''
         Update the price of trading sessions.
         '''
-        self._sim_price_dynamics()
-
-
+        self.session_prices += np.random.normal(0, 0.005*MAX_SESSION_PRICE, NUM_MUTUAL_SESSIONS)
         neg_prices_idx = np.argwhere(self.session_prices < MIN_SESSION_PRICE)
         max_prices_idx = np.argwhere(self.session_prices >= MAX_SESSION_PRICE)
 
@@ -109,7 +107,6 @@ class TradingSession(gym.Env):
             self.session_prices[neg_prices_idx] = MIN_SESSION_PRICE
         for idx in max_prices_idx:
             self.session_prices[max_prices_idx] = MAX_SESSION_PRICE
-
 
     def _update_session_quantities(self):
         '''
@@ -131,8 +128,14 @@ class TradingSession(gym.Env):
 
     def _complete_session(self, idx):
         self.sessions_completed +=1
+        #self.session_steps_left[idx] = SESSION_DURATION
+        #self.session_quantities[idx] = MAX_SESSION_QUANTITY
         self.session_steps_left[idx] = 0
         self.session_quantities[idx] = 0
+        self.holdings_cash[idx] = 0
+        self.holdings_cash_previous[idx] = 0
+        self.holdings_quantity[idx] = 0
+        self.holdings_quantity_previous[idx] = 0
 
     def _compute_reward(self):
 
@@ -144,12 +147,14 @@ class TradingSession(gym.Env):
             return 0
 
         elif delta_forecast_previous > delta_forecast_updated:
-            multiplier = 1000
+            multiplier = 100
         elif delta_forecast_previous < delta_forecast_updated:
-            multiplier = -1000
+            multiplier = -100
 
         delta_holdings = np.subtract(self.holdings_quantity, self.holdings_quantity_previous)
         delta_cash = np.subtract(self.holdings_cash, self.holdings_cash_previous)
+
+        #quantity_over_cash = np.sum(np.nan_to_num(np.divide(delta_holdings, delta_cash), copy=True, nan=0, posinf=0, neginf=0))
 
         quantity_over_cash = np.sum(np.divide(delta_holdings, self.session_prices))
 
@@ -185,26 +190,6 @@ class TradingSession(gym.Env):
         Check if episode is done.
         '''
         return self.sessions_completed >= NUM_SIMULATED_SESSIONS
-
-    def _sim_price_dynamics(self):
-        self.tendency += self._ou_process(self.tendency,
-                                          ou_lambda = 1e-5,
-                                          ou_mu = self.tendency,
-                                          ou_sigma = 0.3)
-        for i in range(len(self.session_prices)):
-            if i == 0:
-                self.session_prices[i] += self._ou_process(self.session_prices[i],
-                                                           ou_lambda = 1e-3,
-                                                           ou_mu = self.tendency,
-                                                           ou_sigma = 0.1)
-            else:
-                self.session_prices[i] += self._ou_process(self.session_prices[i],
-                                                           ou_lambda = 1e-3,
-                                                           ou_mu = self.tendency,
-                                                           ou_sigma = 0.1)
-
-    def _ou_process(self, price, ou_lambda, ou_mu, ou_sigma):
-        return (ou_lambda * (ou_mu - price) + ou_sigma * np.random.randn())
 
     def render(self, mode='human', close=False):
         '''
