@@ -21,18 +21,26 @@ BOUNDARY = 3.3
 class TradingSession(gym.Env):
     metadata = {'render.modes': ['human']}
 
-    def __init__(self):
+    def __init__(self, action_space_config = 'continous'):
         super(TradingSession, self).__init__()
+        self.action_space_config = action_space_config
         self.visualizer = None
         # Definition of action space:
-        self.action_space = spaces.Box(low=0, high=1, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.float32)
+        if self.action_space_config  == 'continous':
+            self.action_space = spaces.Box(low=0, high=1, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.float32)
+        elif self.action_space_config  == 'discrete':
+            self.action_space = spaces.Box(low=0, high=1, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.int16)
         # Definition of observation space:
+        self.observation_space = spaces.Dict({'session_prices': spaces.Box(low=MIN_SESSION_PRICE, high=MAX_SESSION_PRICE, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.float32),
+                                              'holdings_quantity': spaces.Box(low=-MAX_SESSION_QUANTITY, high=MAX_SESSION_QUANTITY, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.float32)})
+
+        '''
         self.observation_space = spaces.Dict({'session_steps_left': spaces.Box(low=1, high=SESSION_DURATION, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.int16),
                                               'session_prices': spaces.Box(low=MIN_SESSION_PRICE, high=MAX_SESSION_PRICE, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.float32),
                                               'session_quantities': spaces.Box(low=-MAX_SESSION_QUANTITY, high=MAX_SESSION_QUANTITY, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.float32),
                                               'holdings_quantity': spaces.Box(low=-MAX_SESSION_QUANTITY, high=MAX_SESSION_QUANTITY, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.float32),
                                               'holdings_cash': spaces.Box(low=-MAX_SESSION_PRICE*MAX_SESSION_QUANTITY, high=MAX_SESSION_PRICE*MAX_SESSION_QUANTITY, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.float32)})
-
+       '''
     def step(self, action):
         '''
         Executes one time step in the env.
@@ -67,6 +75,9 @@ class TradingSession(gym.Env):
         '''
         Place agent's order and update holdings
         '''
+        if self.action_space_config == 'discrete':
+            action = (0.04/100)*action
+
         self.holdings_quantity_previous = self.holdings_quantity.copy()
         self.holdings_cash_previous = self.holdings_cash.copy()
 
@@ -88,11 +99,15 @@ class TradingSession(gym.Env):
         self._update_session_prices()
         self._update_session_quantities()
         self._update_session_steps_left()
+        obs = {'session_prices': self.session_prices,
+               'holdings_quantity': self.holdings_quantity}
+        '''
         obs = {'session_steps_left': self.session_steps_left,
                'session_prices': self.session_prices,
                'session_quantities': self.session_quantities,
                'holdings_quantity': self.holdings_quantity,
                'holdings_cash': self.holdings_cash}
+        '''
         return obs
 
     def _update_session_prices(self):
