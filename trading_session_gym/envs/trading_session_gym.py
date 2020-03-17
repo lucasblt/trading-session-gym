@@ -23,24 +23,18 @@ class TradingSession(gym.Env):
 
     def __init__(self, action_space_config = 'continous'):
         super(TradingSession, self).__init__()
+        #np.random.seed(122)
         self.action_space_config = action_space_config
-        self.visualizer = None
         # Definition of action space:
         if self.action_space_config  == 'continous':
             self.action_space = spaces.Box(low=0, high=1, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.float32)
         elif self.action_space_config  == 'discrete':
-            self.action_space = spaces.Box(low=0, high=1, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.int16)
+            self.action_space = spaces.Discrete(NUM_MUTUAL_SESSIONS + 1)
         # Definition of observation space:
-        self.observation_space = spaces.Dict({'session_prices': spaces.Box(low=MIN_SESSION_PRICE, high=MAX_SESSION_PRICE, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.float32),
-                                              'holdings_quantity': spaces.Box(low=-MAX_SESSION_QUANTITY, high=MAX_SESSION_QUANTITY, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.float32)})
+        low_space = np.array([MIN_SESSION_PRICE]*NUM_MUTUAL_SESSIONS + [-MAX_SESSION_QUANTITY]*NUM_MUTUAL_SESSIONS)
+        high_space = np.array([MAX_SESSION_PRICE]*NUM_MUTUAL_SESSIONS + [MAX_SESSION_QUANTITY]*NUM_MUTUAL_SESSIONS)
+        self.observation_space = spaces.Box(low=low_space, high=high_space, dtype=np.float32)
 
-        '''
-        self.observation_space = spaces.Dict({'session_steps_left': spaces.Box(low=1, high=SESSION_DURATION, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.int16),
-                                              'session_prices': spaces.Box(low=MIN_SESSION_PRICE, high=MAX_SESSION_PRICE, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.float32),
-                                              'session_quantities': spaces.Box(low=-MAX_SESSION_QUANTITY, high=MAX_SESSION_QUANTITY, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.float32),
-                                              'holdings_quantity': spaces.Box(low=-MAX_SESSION_QUANTITY, high=MAX_SESSION_QUANTITY, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.float32),
-                                              'holdings_cash': spaces.Box(low=-MAX_SESSION_PRICE*MAX_SESSION_QUANTITY, high=MAX_SESSION_PRICE*MAX_SESSION_QUANTITY, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.float32)})
-       '''
     def step(self, action):
         '''
         Executes one time step in the env.
@@ -70,13 +64,19 @@ class TradingSession(gym.Env):
         self.boundary = BOUNDARY
         self.multiplier = 0
 
+        return np.hstack([self.session_prices, self.holdings_quantity])
+
 
     def _take_action(self, action):
         '''
         Place agent's order and update holdings
         '''
         if self.action_space_config == 'discrete':
-            action = (0.04/100)*action
+            idx = action
+            action = np.zeros(len(self.session_prices))
+
+            if idx < len(self.session_prices):
+                action[idx] = 0.04/100
 
         self.holdings_quantity_previous = self.holdings_quantity.copy()
         self.holdings_cash_previous = self.holdings_cash.copy()
@@ -89,7 +89,7 @@ class TradingSession(gym.Env):
         for idx in range(NUM_MUTUAL_SESSIONS):
             if action_times_quantity[idx] > 0:
                 self.session_quantities[idx] -= action_times_quantity[idx]
-            elif action_times_quantity[idx] > 0:
+            elif action_times_quantity[idx] < 0:
                 self.session_quantities[idx] += action_times_quantity[idx]
 
     def _next_observation(self):
@@ -97,17 +97,8 @@ class TradingSession(gym.Env):
         Update env and returns formated version of next observation.
         '''
         self._update_session_prices()
-        self._update_session_quantities()
         self._update_session_steps_left()
-        obs = {'session_prices': self.session_prices,
-               'holdings_quantity': self.holdings_quantity}
-        '''
-        obs = {'session_steps_left': self.session_steps_left,
-               'session_prices': self.session_prices,
-               'session_quantities': self.session_quantities,
-               'holdings_quantity': self.holdings_quantity,
-               'holdings_cash': self.holdings_cash}
-        '''
+        obs = np.hstack([self.session_prices, self.holdings_quantity])
         return obs
 
     def _update_session_prices(self):
@@ -124,14 +115,6 @@ class TradingSession(gym.Env):
             self.session_prices[neg_prices_idx] = MIN_SESSION_PRICE
         for idx in max_prices_idx:
             self.session_prices[max_prices_idx] = MAX_SESSION_PRICE
-
-
-    def _update_session_quantities(self):
-        '''
-        Update available quantities of trading sessions.
-        '''
-        pass
-
 
     def _update_session_steps_left(self):
         '''
@@ -185,11 +168,7 @@ class TradingSession(gym.Env):
         return self.sessions_completed
 
     def get_current_state(self):
-        current_state = {'session_steps_left': self.session_steps_left,
-                         'session_prices': self.session_prices,
-                         'session_quantities': self.session_quantities,
-                         'holdings_quantity': self.holdings_quantity,
-                         'holdings_cash': self.holdings_cash}
+        current_state = np.hstack([self.session_prices, self.holdings_quantity])
         return current_state
 
     def get_boundary(self):
@@ -209,13 +188,13 @@ class TradingSession(gym.Env):
         for i in range(len(self.session_prices)):
             if i == 0:
                 self.session_prices[i] += self._ou_process(self.session_prices[i],
-                                                           ou_lambda = 1e-3,
+                                                           ou_lambda = 10e-3,
                                                            ou_mu = self.tendency,
                                                            ou_sigma = 0.1)
             else:
                 self.session_prices[i] += self._ou_process(self.session_prices[i],
-                                                           ou_lambda = 1e-3,
-                                                           ou_mu = self.tendency,
+                                                           ou_lambda = 10e-3,
+                                                           ou_mu = self.session_prices[i-1],
                                                            ou_sigma = 0.1)
 
     def _ou_process(self, price, ou_lambda, ou_mu, ou_sigma):
@@ -225,58 +204,4 @@ class TradingSession(gym.Env):
         '''
         Render the environment to the screen
         '''
-        if mode == 'real-time':
-            if self.visualizer == None:
-                self.visualizer = EnvironmentVisualizer()
-            self.visualizer._render_reward(self.reward)
-            self.visualizer._render_prices(self.session_prices)
-            self.visualizer._resize_x()
-
-            plt.pause(0.001)
         pass
-
-class EnvironmentVisualizer:
-    def __init__(self, limit_x = 100):
-        plt.ion()
-        self.fig, self.axs = plt.subplots(13, figsize=(7,7), sharex=True)
-        self.fig.subplots_adjust(hspace=0)
-        self.lines = []
-        self.limit_x = limit_x
-        self.rewards_buffer = np.zeros(1)
-        self.session_prices_buffer =np.zeros((1, 12))
-        for ax in self.axs:
-            line, = ax.plot(0, 0, alpha=0.8)
-            self.lines.append(line)
-
-        self.axs[-1].set_ylim([0, 0.1])
-
-        plt.show()
-
-    def _render_reward(self, reward):
-        self.rewards_buffer = np.append(self.rewards_buffer, reward)
-
-        x_vec = np.arange(len(self.rewards_buffer))
-        y_vec = 100*self.rewards_buffer
-
-        self.lines[-1].set_data(x_vec, y_vec)
-
-        if np.min(y_vec)*1.30 <= self.lines[-1].axes.get_ylim()[0] or np.max(y_vec)*1.30 >= self.lines[-1].axes.get_ylim()[1]:
-            self.axs[-1].set_ylim([np.min(y_vec)*1.30, np.max(y_vec)*1.30])
-
-    def _render_prices(self, prices):
-        self.session_prices_buffer = np.vstack((self.session_prices_buffer, np.reshape(prices, (1, 12))))
-
-        for idx in range(len(prices)):
-            x_vec = np.arange(len(self.session_prices_buffer))
-            y_vec = self.session_prices_buffer[:, idx]
-
-            self.lines[idx].set_data(x_vec, y_vec)
-
-            if np.min(y_vec)*1.30 <= self.lines[idx].axes.get_ylim()[0] or np.max(y_vec)*1.30 >= self.lines[idx].axes.get_ylim()[1]:
-                self.axs[idx].set_ylim([np.min(y_vec)*1.30, np.max(y_vec)*1.30])
-
-    def _resize_x(self):
-        #if self.lines[-1].axes.get_xlim()[1] >= self.limit_x:
-        #    self.axs[0].set_xlim([self.lines[-1].axes.get_xlim()[0] + 1, self.lines[-1].axes.get_xlim()[1] + 1])
-        #else:
-            self.axs[0].set_xlim([0, self.lines[-1].axes.get_xlim()[1] + 1])
