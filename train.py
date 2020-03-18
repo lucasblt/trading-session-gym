@@ -51,14 +51,14 @@ class Agent:
         self._reset()
 
     def _reset(self):
-        self.state = env.reset()
+        self.state = self.env.reset()
         self.total_reward = 0.0
 
     def play_step(self, net, epsilon=0.0, device="cpu"):
         done_reward = None
 
         if np.random.random() < epsilon:
-            action = env.action_space.sample()
+            action = self.env.action_space.sample()
         else:
             state_a = np.array([self.state], copy=False)
             state_v = torch.tensor(state_a).to(device)
@@ -78,7 +78,7 @@ class Agent:
             self._reset()
         return done_reward
 
-def calc_loss(batch, net, tgt_net, device="cpu", cuda_async=False):
+def calc_loss(batch, net, tgt_net, device="cpu", cuda_async=False, gamma=0):
     states, actions, rewards, dones, next_states = batch
     states_v = torch.tensor(states).to(device)
     next_states_v = torch.tensor(next_states).to(device)
@@ -99,11 +99,12 @@ def calc_loss(batch, net, tgt_net, device="cpu", cuda_async=False):
     next_state_values[done_mask] = 0.0
     next_state_values = next_state_values.detach()
 
-    expected_state_action_values = next_state_values * GAMMA + rewards_v
+    expected_state_action_values = next_state_values * gamma + rewards_v
     return nn.MSELoss()(state_action_values, expected_state_action_values)
 
 def main():
-    MEAN_REWARD_BOUND = 7
+
+    MEAN_REWARD_BOUND = 70
     GAMMA = 0
     BATCH_SIZE = 100
     REPLAY_SIZE = 10000
@@ -116,8 +117,10 @@ def main():
 
     if torch.cuda.is_available():
         device = torch.device("cuda")
+        print("cuda available")
     else:
         device = torch.device("cpu")
+        print("cuda not available")
 
     env = TradingSession(action_space_config = 'discrete')
 
@@ -160,10 +163,9 @@ def main():
 
         optimizer.zero_grad()
         batch = buffer.sample(BATCH_SIZE)
-        loss_t = calc_loss(batch, net, tgt_net, device=device, cuda_async = True)
+        loss_t = calc_loss(batch, net, tgt_net, device=device, cuda_async = True, gamma = GAMMA)
         loss_t.backward()
         optimizer.step()
-
 
 if __name__ == '__main__':
     main()
