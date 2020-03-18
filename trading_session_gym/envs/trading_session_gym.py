@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import logging
 logger = logging.getLogger(__name__)
 
-STEP_SIZE = 60 # In seconds
+STEP_SIZE = 5*60 # In seconds
 SESSION_DURATION = 24*60*60/STEP_SIZE # In steps
 NUM_MUTUAL_SESSIONS = 12 # Number of mutual trading sessions
 NUM_SIMULATED_SESSIONS = 1*NUM_MUTUAL_SESSIONS # Used to get the done
@@ -16,6 +16,7 @@ MAX_SESSION_QUANTITY = 7
 MAX_SESSION_PRICE = 101
 MIN_SESSION_PRICE = 1
 BOUNDARY = 3.3
+CONSTANT_ORDER = 0.2/100
 
 
 class TradingSession(gym.Env):
@@ -23,16 +24,16 @@ class TradingSession(gym.Env):
 
     def __init__(self, action_space_config = 'continous'):
         super(TradingSession, self).__init__()
-        #np.random.seed(122)
         self.action_space_config = action_space_config
         # Definition of action space:
         if self.action_space_config  == 'continous':
             self.action_space = spaces.Box(low=0, high=1, shape=(NUM_MUTUAL_SESSIONS,), dtype=np.float32)
         elif self.action_space_config  == 'discrete':
+            self.constant_order = CONSTANT_ORDER
             self.action_space = spaces.Discrete(NUM_MUTUAL_SESSIONS + 1)
         # Definition of observation space:
-        low_space = np.array([MIN_SESSION_PRICE]*NUM_MUTUAL_SESSIONS + [-MAX_SESSION_QUANTITY]*NUM_MUTUAL_SESSIONS)
-        high_space = np.array([MAX_SESSION_PRICE]*NUM_MUTUAL_SESSIONS + [MAX_SESSION_QUANTITY]*NUM_MUTUAL_SESSIONS)
+        low_space = np.array([0]*NUM_MUTUAL_SESSIONS + [0])
+        high_space = np.array([1]*NUM_MUTUAL_SESSIONS + [MAX_SESSION_QUANTITY*NUM_MUTUAL_SESSIONS/BOUNDARY])
         self.observation_space = spaces.Box(low=low_space, high=high_space, dtype=np.float32)
 
     def step(self, action):
@@ -60,12 +61,11 @@ class TradingSession(gym.Env):
         self.session_quantities = np.full(NUM_MUTUAL_SESSIONS, MAX_SESSION_QUANTITY, dtype='float')
         self.session_steps_left = np.arange(SESSION_DURATION, (SESSION_DURATION-NUM_MUTUAL_SESSIONS*PRODUCT_DURATION), -PRODUCT_DURATION)
         self.holdings_quantity = np.zeros(NUM_MUTUAL_SESSIONS, dtype='float')
+        self.holdings_quantity_total = 0.0
         self.holdings_cash = np.zeros(NUM_MUTUAL_SESSIONS, dtype='float')
         self.boundary = BOUNDARY
         self.multiplier = 0
-
-        return np.hstack([self.session_prices, self.holdings_quantity])
-
+        return np.hstack([self.session_prices/self.session_prices.max(), self.holdings_quantity_total/self.boundary])
 
     def _take_action(self, action):
         '''
@@ -76,7 +76,7 @@ class TradingSession(gym.Env):
             action = np.zeros(len(self.session_prices))
 
             if idx < len(self.session_prices):
-                action[idx] = 0.04/100
+                action[idx] = self.constant_order
 
         self.holdings_quantity_previous = self.holdings_quantity.copy()
         self.holdings_cash_previous = self.holdings_cash.copy()
@@ -85,6 +85,8 @@ class TradingSession(gym.Env):
 
         self.holdings_quantity += action_times_quantity
         self.holdings_cash += np.multiply(action_times_quantity, self.session_prices)
+
+        self.holdings_quantity_total = np.sum(self.holdings_quantity)
 
         for idx in range(NUM_MUTUAL_SESSIONS):
             if action_times_quantity[idx] > 0:
@@ -98,7 +100,7 @@ class TradingSession(gym.Env):
         '''
         self._update_session_prices()
         self._update_session_steps_left()
-        obs = np.hstack([self.session_prices, self.holdings_quantity])
+        obs = np.hstack([self.session_prices/self.session_prices.max(), self.holdings_quantity_total/self.boundary])
         return obs
 
     def _update_session_prices(self):

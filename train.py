@@ -10,14 +10,14 @@ from tensorboardX import SummaryWriter
 
 from trading_session_gym.envs.trading_session_gym import TradingSession
 
-MEAN_REWARD_BOUND = 70
+MEAN_REWARD_BOUND = 0.95
 GAMMA = 0
-BATCH_SIZE = 100
-REPLAY_SIZE = 10000
+BATCH_SIZE = 20
+REPLAY_SIZE = 100000
 LEARNING_RATE = 1e-4
 SYNC_TARGET_STEPS = 1000
 REPLAY_START_SIZE = 10000
-EPSILON_DECAY = 10**5
+EPSILON_DECAY = 10**6
 EPSILON_START = 1.0
 EPSILON_FINAL = 0.02
 
@@ -60,14 +60,20 @@ class Agent:
     def __init__(self, env, exp_buffer):
         self.env = env
         self.exp_buffer = exp_buffer
+        self.min_price = None
         self._reset()
 
     def _reset(self):
         self.state = self.env.reset()
         self.total_reward = 0.0
+        self.min_price = None
 
     def play_step(self, net, epsilon=0.0, device="cpu"):
         done_reward = None
+        max_reward = None
+
+        if self.min_price == None or self.min_price > self.env.session_prices.min():
+            self.min_price = self.env.session_prices.min()
 
         if np.random.random() < epsilon:
             action = self.env.action_space.sample()
@@ -87,8 +93,14 @@ class Agent:
         self.state = new_state
         if is_done:
             done_reward = self.total_reward
+            max_reward = 1000*self.env.boundary/self.min_price
+            #print("Done: {}".format(done_reward))
+            #print("Max: {}".format(max_reward))
+            print("Perf.: {}%".format(round(100*done_reward/max_reward, 3)))
             self._reset()
-        return done_reward
+            return done_reward/max_reward
+        else:
+            return None
 
 def calc_loss(batch, net, tgt_net, device="cpu", cuda_async=False, gamma=0):
     states, actions, rewards, dones, next_states = batch
@@ -114,7 +126,7 @@ def calc_loss(batch, net, tgt_net, device="cpu", cuda_async=False, gamma=0):
     expected_state_action_values = next_state_values * gamma + rewards_v
     return nn.MSELoss()(state_action_values, expected_state_action_values)
 
-def train():
+if __name__ == '__main__':
     writer = SummaryWriter(comment="-trading_session")
 
     if torch.cuda.is_available():
@@ -177,6 +189,3 @@ def train():
         loss_t.backward()
         optimizer.step()
     writer.close()
-
-if __name__ == '__main__':
-    train()
