@@ -185,7 +185,7 @@ if __name__ == '__main__':
 
         optimizer.zero_grad()
         batch = buffer.sample(BATCH_SIZE)
-        loss_t = calc_loss(batch, net, tgt_net, device=device, cuda_async = True, gamma = GAMMA)
+        loss_t = calc_loss(batch, net, tgt_net, device=device, cuda_async = False, gamma = GAMMA)
         loss_t.backward()
         optimizer.step()
     writer.close()
