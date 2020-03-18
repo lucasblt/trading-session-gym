@@ -6,8 +6,20 @@ import collections
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from tensorboardX import SummaryWriter
 
 from trading_session_gym.envs.trading_session_gym import TradingSession
+
+MEAN_REWARD_BOUND = 70
+GAMMA = 0
+BATCH_SIZE = 100
+REPLAY_SIZE = 10000
+LEARNING_RATE = 1e-4
+SYNC_TARGET_STEPS = 1000
+REPLAY_START_SIZE = 10000
+EPSILON_DECAY = 10**5
+EPSILON_START = 1.0
+EPSILON_FINAL = 0.02
 
 Experience = collections.namedtuple('Experience', field_names=['state', 'action', 'reward', 'done', 'new_state'])
 
@@ -102,18 +114,8 @@ def calc_loss(batch, net, tgt_net, device="cpu", cuda_async=False, gamma=0):
     expected_state_action_values = next_state_values * gamma + rewards_v
     return nn.MSELoss()(state_action_values, expected_state_action_values)
 
-def main():
-
-    MEAN_REWARD_BOUND = 70
-    GAMMA = 0
-    BATCH_SIZE = 100
-    REPLAY_SIZE = 10000
-    LEARNING_RATE = 1e-4
-    SYNC_TARGET_STEPS = 1000
-    REPLAY_START_SIZE = 10000
-    EPSILON_DECAY = 10**5
-    EPSILON_START = 1.0
-    EPSILON_FINAL = 0.02
+def train():
+    writer = SummaryWriter(comment="-trading_session")
 
     if torch.cuda.is_available():
         device = torch.device("cuda")
@@ -123,7 +125,6 @@ def main():
         print("cuda not available")
 
     env = TradingSession(action_space_config = 'discrete')
-
     net = DQN(env.observation_space.shape[0], env.action_space.n).to(device)
     tgt_net = DQN(env.observation_space.shape[0], env.action_space.n).to(device)
 
@@ -134,6 +135,8 @@ def main():
     optimizer = optim.Adam(net.parameters(), lr=LEARNING_RATE)
     total_rewards = []
     step_idx = 0
+    ts_step = 0
+    ts = time.time()
     best_mean_reward = None
 
     while True:
@@ -144,8 +147,15 @@ def main():
 
         if reward is not None:
             total_rewards.append(reward)
+            speed = (step_idx - ts_step) / (time.time() - ts)
+            ts_step = step_idx
+            ts = time.time()
             mean_reward = np.mean(total_rewards[-100:])
-            print("%d: done %d episodes, mean reward %.3f, eps %.2f" % (step_idx, len(total_rewards), mean_reward, epsilon))
+            print("%d: done %d episodes, mean reward %.3f, eps %.2f, speed %.2f steps/s" % (step_idx, len(total_rewards), mean_reward, epsilon, speed))
+            writer.add_scalar("epsilon", epsilon, step_idx)
+            writer.add_scalar("speed", speed, step_idx)
+            writer.add_scalar("reward_100", mean_reward, step_idx)
+            writer.add_scalar("reward", reward, step_idx)
             if best_mean_reward is None or best_mean_reward < mean_reward:
                 torch.save(net.state_dict(), "model.dat")
                 if best_mean_reward is not None:
@@ -166,6 +176,7 @@ def main():
         loss_t = calc_loss(batch, net, tgt_net, device=device, cuda_async = True, gamma = GAMMA)
         loss_t.backward()
         optimizer.step()
+    writer.close()
 
 if __name__ == '__main__':
-    main()
+    train()
