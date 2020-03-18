@@ -6,7 +6,6 @@ import collections
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import cuda
 
 from trading_session_gym.envs.trading_session_gym import TradingSession
 
@@ -115,7 +114,7 @@ def main():
     EPSILON_START = 1.0
     EPSILON_FINAL = 0.02
 
-    if cuda.is_available():
+    if torch.cuda.is_available():
         device = torch.device("cuda")
     else:
         device = torch.device("cpu")
