@@ -9,14 +9,14 @@ logger = logging.getLogger(__name__)
 
 STEP_SIZE = 5*60 # In seconds
 SESSION_DURATION = 24*60*60/STEP_SIZE # In steps
-NUM_MUTUAL_SESSIONS = 12 # Number of mutual trading sessions
+NUM_MUTUAL_SESSIONS = 3 # Number of mutual trading sessions
 NUM_SIMULATED_SESSIONS = 1*NUM_MUTUAL_SESSIONS # Used to get the done
 PRODUCT_DURATION = 5*60/STEP_SIZE # In steps
 MAX_SESSION_QUANTITY = 7
 MAX_SESSION_PRICE = 101
 MIN_SESSION_PRICE = 1
 BOUNDARY = 3.3
-CONSTANT_ORDER = 0.2/100
+CONSTANT_ORDER = 3.3/SESSION_DURATION
 
 
 class TradingSession(gym.Env):
@@ -65,12 +65,15 @@ class TradingSession(gym.Env):
         self.holdings_cash = np.zeros(NUM_MUTUAL_SESSIONS, dtype='float')
         self.boundary = BOUNDARY
         self.multiplier = 0
-        return np.hstack([self.session_prices/self.session_prices.max(), self.holdings_quantity_total/self.boundary])
+        return np.hstack([self.session_prices/MAX_SESSION_PRICE, self.holdings_quantity_total/self.boundary])
 
     def _take_action(self, action):
         '''
         Place agent's order and update holdings
         '''
+        self.holdings_quantity_previous = self.holdings_quantity.copy()
+        self.holdings_cash_previous = self.holdings_cash.copy()
+
         if self.action_space_config == 'discrete':
             idx = action
             action = np.zeros(len(self.session_prices))
@@ -78,10 +81,10 @@ class TradingSession(gym.Env):
             if idx < len(self.session_prices):
                 action[idx] = self.constant_order
 
-        self.holdings_quantity_previous = self.holdings_quantity.copy()
-        self.holdings_cash_previous = self.holdings_cash.copy()
+            action_times_quantity = action
 
-        action_times_quantity = np.multiply(action, self.session_quantities)
+        else:
+            action_times_quantity = np.multiply(action, self.session_quantities)
 
         self.holdings_quantity += action_times_quantity
         self.holdings_cash += np.multiply(action_times_quantity, self.session_prices)
@@ -100,7 +103,7 @@ class TradingSession(gym.Env):
         '''
         self._update_session_prices()
         self._update_session_steps_left()
-        obs = np.hstack([self.session_prices/self.session_prices.max(), self.holdings_quantity_total/self.boundary])
+        obs = np.hstack([self.session_prices/MAX_SESSION_PRICE, self.holdings_quantity_total/self.boundary])
         return obs
 
     def _update_session_prices(self):
@@ -144,14 +147,14 @@ class TradingSession(gym.Env):
             return 0
 
         elif delta_forecast_previous > delta_forecast_updated:
-            multiplier = 1000
+            multiplier = 1e19
         elif delta_forecast_previous < delta_forecast_updated:
-            multiplier = -1000
+            multiplier = -1e19
 
         delta_holdings = np.subtract(self.holdings_quantity, self.holdings_quantity_previous)
         delta_cash = np.subtract(self.holdings_cash, self.holdings_cash_previous)
 
-        quantity_over_cash = np.sum(np.divide(delta_holdings, self.session_prices))
+        quantity_over_cash = np.sum(np.divide(delta_holdings, np.power(self.session_prices, 10)))
 
         self.reward = multiplier*quantity_over_cash
 

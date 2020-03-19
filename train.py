@@ -46,9 +46,11 @@ class DQN(nn.Module):
         super(DQN, self).__init__()
         # network
         self.fc = nn.Sequential(
-                    nn.Linear(n_inputs, n_inputs),
+                    nn.Linear(n_inputs, 4*n_inputs),
                     nn.ReLU(),
-                    nn.Linear(n_inputs, n_outputs)
+                    nn.Linear(4*n_inputs, 4*n_inputs),
+                    nn.ReLU(),
+                    nn.Linear(4*n_inputs, n_outputs)
         )
 
 
@@ -93,7 +95,7 @@ class Agent:
         self.state = new_state
         if is_done:
             done_reward = self.total_reward
-            max_reward = 1000*self.env.boundary/self.min_price
+            max_reward = 1e19*self.env.boundary/self.min_price**10
             #print("Done: {}".format(done_reward))
             #print("Max: {}".format(max_reward))
             print("Perf.: {}%".format(round(100*done_reward/max_reward, 3)))
